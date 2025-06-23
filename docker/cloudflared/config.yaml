@@ -1,0 +1,53 @@
+# Cloudflare Tunnel configuration for Apache Superset
+# This file is used for local development with Docker Compose
+
+# Tunnel credentials will be provided by TUNNEL_TOKEN environment variable
+# or you can use credentials-file for named tunnels
+
+# Tunnel configuration
+tunnel: ${CLOUDFLARE_TUNNEL_ID}
+credentials-file: /etc/cloudflared/credentials.json
+
+# Logging
+loglevel: info
+transport-loglevel: warn
+
+# Metrics server for monitoring
+metrics: 0.0.0.0:2000
+
+# Ingress rules - routes traffic to appropriate services
+ingress:
+  # Superset application
+  - hostname: ${CLOUDFLARE_HOSTNAME:-superset.local}
+    service: http://superset:8088
+    originRequest:
+      noTLSVerify: true
+      connectTimeout: 30s
+      tcpKeepAlive: 30s
+      keepAliveConnections: 4
+      httpHostHeader: superset
+      originServerName: superset
+    
+  # Grafana monitoring (if enabled)
+  - hostname: ${CLOUDFLARE_MONITORING_HOSTNAME:-monitoring.local}
+    service: http://grafana:3000
+    originRequest:
+      noTLSVerify: true
+      connectTimeout: 30s
+  
+  # Prometheus metrics (if enabled)
+  - hostname: ${CLOUDFLARE_METRICS_HOSTNAME:-metrics.local}
+    service: http://prometheus:9090
+    originRequest:
+      noTLSVerify: true
+      connectTimeout: 30s
+  
+  # Health check endpoint
+  - hostname: ${CLOUDFLARE_HEALTH_HOSTNAME:-health.local}
+    path: /health
+    service: http://superset:8088
+    originRequest:
+      noTLSVerify: true
+  
+  # Catch-all rule (required)
+  - service: http_status:404

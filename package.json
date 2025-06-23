@@ -1,0 +1,32 @@
+{
+  "name": "superset-deploy",
+  "version": "1.0.0",
+  "description": "Apache Superset deployment automation with Pulumi",
+  "private": true,
+  "scripts": {
+    "setup": "make setup",
+    "deploy": "make deploy",
+    "destroy": "make destroy",
+    "dev": "make dev",
+    "test": "make test"
+  },
+  "keywords": [
+    "superset",
+    "pulumi",
+    "infrastructure",
+    "gcp",
+    "docker"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "@pulumi/pulumi": "^3.0.0",
+    "@pulumi/gcp": "^7.0.0",
+    "@pulumi/docker": "^4.0.0",
+    "@pulumi/kubernetes": "^4.0.0"
+  }
+}

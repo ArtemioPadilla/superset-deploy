@@ -1,0 +1,177 @@
+# System configuration for Apache Superset deployments
+# This file defines all stacks and their configurations
+
+# Global settings applied to all stacks
+global:
+  superset:
+    default_version: "3.0.0"
+    default_admin_email: "admin@example.com"
+  monitoring:
+    retention_days: 30
+  backup:
+    retention_days: 7
+
+# Stack definitions
+stacks:
+  # Local development stack - minimal setup
+  dev:
+    type: minimal
+    environment: local
+    enabled: true
+    superset:
+      version: "3.0.0"
+      port: 8088
+      dev_mode: true
+    database:
+      type: sqlite
+      path: ./data/superset.db
+    cache:
+      type: none
+
+  # Staging environment - standard setup on GCP
+  staging:
+    type: standard
+    environment: gcp
+    enabled: true
+    gcp:
+      project_id: "your-gcp-project"
+      region: "us-central1"
+      zone: "us-central1-a"
+    superset:
+      version: "3.0.0"
+      replicas: 1
+      resources:
+        cpu: "1"
+        memory: "2Gi"
+    database:
+      type: "cloud-sql"
+      tier: "db-f1-micro"  # Free tier eligible
+      disk_size: 10
+      backup:
+        enabled: true
+        time: "02:00"
+    cache:
+      type: "redis"
+      tier: "basic"
+      memory_size_gb: 1
+    security:
+      ssl:
+        enabled: true
+        managed: true
+      oauth:
+        enabled: false
+    cloudflare:
+      enabled: false
+      tunnel_name: "superset-staging"
+      hostname: "superset-staging.example.com"
+      access_policies:
+        - name: "internal-users"
+          include:
+            - email_domain: "company.com"
+
+  # Production environment - full featured stack
+  production:
+    type: production
+    environment: gcp
+    enabled: false
+    gcp:
+      project_id: "your-gcp-project"
+      region: "us-central1"
+      zone: "us-central1-a"
+    superset:
+      version: "3.0.0"
+      replicas: 3
+      autoscaling:
+        enabled: true
+        min_replicas: 2
+        max_replicas: 10
+        cpu_threshold: 70
+      resources:
+        cpu: "2"
+        memory: "4Gi"
+    database:
+      type: "cloud-sql"
+      tier: "db-n1-standard-2"
+      disk_size: 100
+      disk_type: "pd-ssd"
+      high_availability: true
+      backup:
+        enabled: true
+        time: "02:00"
+        location: "us"
+        retention_days: 30
+    cache:
+      type: "redis"
+      tier: "standard"
+      memory_size_gb: 5
+      high_availability: true
+    monitoring:
+      enabled: true
+      prometheus:
+        retention_days: 30
+        storage_size: 100
+      grafana:
+        enabled: true
+        admin_password_secret: "grafana-admin-password"
+      alerting:
+        enabled: true
+        channels:
+          - type: "email"
+            recipients: ["ops@example.com"]
+          - type: "slack"
+            webhook_secret: "slack-webhook-url"
+    security:
+      ssl:
+        enabled: true
+        managed: true
+      oauth:
+        enabled: true
+        providers:
+          - google
+          - github
+      vpc:
+        enabled: true
+        private_ip: true
+      secrets:
+        backend: "secret-manager"
+    cloudflare:
+      enabled: true
+      tunnel_name: "superset-production"
+      hostname: "superset.company.com"
+      monitoring_hostname: "monitoring.company.com"
+      metrics_hostname: "metrics.company.com"
+      deployment_type: "cloudrun"  # or "gke" for Kubernetes
+      access_policies:
+        - name: "employees"
+          include:
+            - email_domain: "company.com"
+            - github_org: "company-org"
+        - name: "contractors"
+          include:
+            - email: ["contractor1@example.com", "contractor2@example.com"]
+          require:
+            - purpose_justification: true
+    backup:
+      enabled: true
+      frequency: "0 2 * * *"  # Daily at 2 AM
+      destination: "gs://your-backup-bucket"
+      retention_days: 30
+
+  # Custom stack example
+  custom:
+    type: standard
+    environment: gcp
+    enabled: false
+    extends: staging  # Inherit settings from staging
+    superset:
+      replicas: 2
+      plugins:
+        - "superset-plugin-chart-echarts"
+        - "superset-plugin-chart-handlebars"
+    database:
+      tier: "db-n1-standard-1"
+    features:
+      sql_lab: true
+      dashboard_emails: true
+      alerts: true
+      reports: true

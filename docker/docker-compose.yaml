@@ -1,0 +1,173 @@
+version: '3.8'
+
+services:
+  # Cloudflare Tunnel for secure access
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: superset_cloudflared
+    restart: unless-stopped
+    command: tunnel --config /etc/cloudflared/config.yaml run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    volumes:
+      - ./cloudflared:/etc/cloudflared
+    depends_on:
+      - superset
+    profiles:
+      - cloudflare
+
+  superset:
+    image: apache/superset:${SUPERSET_VERSION:-3.0.0}
+    container_name: superset_app
+    command: ["/app/docker/docker-bootstrap.sh", "app-gunicorn"]
+    restart: unless-stopped
+    # Remove public port exposure when using Cloudflare
+    ports:
+      - "${SUPERSET_PORT:-8088}:8088"
+    environment:
+      - SUPERSET_SECRET_KEY=${SUPERSET_SECRET_KEY:-your-secret-key-here}
+      - SUPERSET_ADMIN_USERNAME=${SUPERSET_ADMIN_USERNAME:-admin}
+      - SUPERSET_ADMIN_PASSWORD=${SUPERSET_ADMIN_PASSWORD:-admin}
+      - SUPERSET_ADMIN_EMAIL=${SUPERSET_ADMIN_EMAIL:-admin@example.com}
+      - SUPERSET_LOAD_EXAMPLES=${SUPERSET_LOAD_EXAMPLES:-yes}
+      - DATABASE_URL=${DATABASE_URL:-sqlite:////app/superset_home/superset.db}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+    volumes:
+      - superset_home:/app/superset_home
+      - ./local/superset_config.py:/app/pythonpath/superset_config.py
+      - ./local/docker-init.sh:/app/docker-init.sh
+    depends_on:
+      - db
+      - redis
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8088/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  superset-init:
+    image: apache/superset:${SUPERSET_VERSION:-3.0.0}
+    container_name: superset_init
+    command: ["/app/docker-init.sh"]
+    environment:
+      - SUPERSET_SECRET_KEY=${SUPERSET_SECRET_KEY:-your-secret-key-here}
+      - SUPERSET_ADMIN_USERNAME=${SUPERSET_ADMIN_USERNAME:-admin}
+      - SUPERSET_ADMIN_PASSWORD=${SUPERSET_ADMIN_PASSWORD:-admin}
+      - SUPERSET_ADMIN_EMAIL=${SUPERSET_ADMIN_EMAIL:-admin@example.com}
+      - SUPERSET_LOAD_EXAMPLES=${SUPERSET_LOAD_EXAMPLES:-yes}
+      - DATABASE_URL=${DATABASE_URL:-sqlite:////app/superset_home/superset.db}
+    volumes:
+      - superset_home:/app/superset_home
+      - ./local/superset_config.py:/app/pythonpath/superset_config.py
+      - ./local/docker-init.sh:/app/docker-init.sh
+    depends_on:
+      - db
+      - redis
+
+  superset-worker:
+    image: apache/superset:${SUPERSET_VERSION:-3.0.0}
+    container_name: superset_worker
+    command: ["/app/docker/docker-bootstrap.sh", "worker"]
+    restart: unless-stopped
+    environment:
+      - SUPERSET_SECRET_KEY=${SUPERSET_SECRET_KEY:-your-secret-key-here}
+      - DATABASE_URL=${DATABASE_URL:-sqlite:////app/superset_home/superset.db}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+    volumes:
+      - superset_home:/app/superset_home
+      - ./local/superset_config.py:/app/pythonpath/superset_config.py
+    depends_on:
+      - db
+      - redis
+    profiles:
+      - worker
+
+  superset-beat:
+    image: apache/superset:${SUPERSET_VERSION:-3.0.0}
+    container_name: superset_beat
+    command: ["/app/docker/docker-bootstrap.sh", "beat"]
+    restart: unless-stopped
+    environment:
+      - SUPERSET_SECRET_KEY=${SUPERSET_SECRET_KEY:-your-secret-key-here}
+      - DATABASE_URL=${DATABASE_URL:-sqlite:////app/superset_home/superset.db}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+    volumes:
+      - superset_home:/app/superset_home
+      - ./local/superset_config.py:/app/pythonpath/superset_config.py
+    depends_on:
+      - db
+      - redis
+    profiles:
+      - worker
+
+  db:
+    image: postgres:15-alpine
+    container_name: superset_db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=${DATABASE_NAME:-superset}
+      - POSTGRES_USER=${DATABASE_USER:-superset}
+      - POSTGRES_PASSWORD=${DATABASE_PASSWORD:-superset}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER:-superset}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    profiles:
+      - postgres
+
+  redis:
+    image: redis:7-alpine
+    container_name: superset_redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Monitoring stack (optional)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: superset_prometheus
+    restart: unless-stopped
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    profiles:
+      - monitoring
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: superset_grafana
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/dashboards:/etc/grafana/provisioning/dashboards
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    profiles:
+      - monitoring
+
+volumes:
+  superset_home:
+  postgres_data:
+  redis_data:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  default:
+    name: superset-network

@@ -1,0 +1,12 @@
+name: superset-deploy
+runtime:
+  name: python
+  options:
+    virtualenv: venv
+description: Apache Superset deployment on GCP with Pulumi
+config:
+  gcp:project:
+    description: The GCP project to deploy into
+  gcp:region:
+    description: The GCP region to deploy into
+    default: us-central1
