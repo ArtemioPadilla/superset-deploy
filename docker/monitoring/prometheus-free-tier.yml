@@ -1,0 +1,71 @@
+# Prometheus configuration for GCP Free Tier monitoring
+# Optimized for minimal resource usage
+
+global:
+  scrape_interval: 60s  # Conservador para free tier
+  evaluation_interval: 60s
+  # Límites de almacenamiento
+  external_labels:
+    environment: 'free-tier'
+    project: 'local-superset'
+
+# Alertmanager (deshabilitado en free tier)
+alerting:
+  alertmanagers: []
+
+rule_files: []
+
+scrape_configs:
+  # Superset metrics
+  - job_name: 'superset'
+    scrape_interval: 60s
+    static_configs:
+      - targets: ['superset:8088']
+    metrics_path: '/metrics'
+    
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+    
+  # MinIO (Cloud Storage emulation)
+  - job_name: 'minio'
+    scrape_interval: 120s  # Menos frecuente
+    static_configs:
+      - targets: ['minio:9000']
+    metrics_path: '/minio/v2/metrics/cluster'
+    
+  # Firestore emulator (si expone métricas)
+  - job_name: 'firestore'
+    scrape_interval: 120s
+    static_configs:
+      - targets: ['firestore:8080']
+    metrics_path: '/metrics'
+    honor_labels: true
+    
+  # Pub/Sub emulator
+  - job_name: 'pubsub'
+    scrape_interval: 120s
+    static_configs:
+      - targets: ['pubsub:8085']
+    metrics_path: '/metrics'
+
+# Configuración de almacenamiento
+storage:
+  tsdb:
+    retention:
+      time: 7d  # Retención de 7 días
+      size: 1GB  # Límite de 1GB
+
+# Límites de recursos
+limits:
+  # Límites de series temporales
+  max_samples_per_send: 1000
+  # Límites de memoria
+  max_query_samples: 50000
+  
+# Remote write (deshabilitado para free tier)
+remote_write: []
+
+# Remote read (deshabilitado para free tier)  
+remote_read: []

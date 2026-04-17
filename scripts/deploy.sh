@@ -7,9 +7,18 @@ ACTION="${2:-up}"
 
 echo "🚀 Deploying Apache Superset - Environment: $ENV"
 
+# Check if virtual environment exists
+if [ ! -d ".venv" ]; then
+    echo "❌ Virtual environment not found. Run 'make setup' first."
+    exit 1
+fi
+
+# Use virtual environment Python
+PYTHON=".venv/bin/python3"
+
 # Validate configuration
 echo "🔍 Validating configuration..."
-python3 scripts/validate.py
+$PYTHON scripts/validate.py
 
 # Load environment variables
 if [ -f .env ]; then

@@ -1,0 +1,208 @@
+# Multi-environment configuration example
+# This shows how to deploy Superset to development, staging, and production
+
+global:
+  superset:
+    default_version: "5.0.0"
+    default_admin_email: "admin@company.com"
+  monitoring:
+    retention_days: 30
+  backup:
+    retention_days: 7
+
+stacks:
+  # Local development - runs on Docker
+  dev:
+    type: minimal
+    environment: local
+    enabled: true
+    superset:
+      version: "latest"  # Use latest for development
+      port: 8088
+      dev_mode: true
+    database:
+      type: sqlite
+      path: ./data/superset-dev.db
+    cache:
+      type: none
+
+  # Personal cloud development - minimal GCP resources
+  dev-cloud:
+    type: minimal
+    environment: gcp
+    enabled: true
+    gcp:
+      project_id: "${GCP_DEV_PROJECT:-my-dev-project}"
+      region: "us-central1"
+      credentials_path: "~/.gcp/dev-key.json"
+    superset:
+      version: "latest"
+      resources:
+        cpu: "0.5"
+        memory: "1Gi"
+    database:
+      type: cloud-sql
+      tier: "db-f1-micro"  # Free tier
+      disk_size: 10
+      password: "${DB_PASSWORD_DEV}"
+    cache:
+      type: none  # No cache for dev to save costs
+
+  # Staging environment - standard setup
+  staging:
+    type: standard
+    environment: gcp
+    enabled: true
+    gcp:
+      project_id: "${GCP_STAGING_PROJECT}"
+      region: "${GCP_REGION:-us-central1}"
+      service_account: "superset-staging@${GCP_STAGING_PROJECT}.iam.gserviceaccount.com"
+    superset:
+      version: "${SUPERSET_VERSION:-5.0.0}"  # Controlled version
+      replicas: 2
+      resources:
+        cpu: "1"
+        memory: "2Gi"
+    database:
+      type: cloud-sql
+      tier: "db-g1-small"  # Shared CPU
+      disk_size: 20
+      disk_type: "pd-ssd"
+      password: "${DB_PASSWORD_STAGING}"
+      backup:
+        enabled: true
+        time: "03:00"
+        retention_days: 7
+    cache:
+      type: redis
+      tier: "basic"
+      memory_size_gb: 1
+      password: "${REDIS_PASSWORD_STAGING}"
+    security:
+      ssl:
+        enabled: true
+        managed: true
+        domains: ["staging.superset.company.com"]
+      secrets_backend: "secret-manager"
+    cloudflare:
+      enabled: true
+      tunnel_name: "superset-staging"
+      tunnel_id: "${CF_TUNNEL_ID_STAGING}"
+      tunnel_secret: "${CF_TUNNEL_SECRET_STAGING}"
+      hostname: "staging.superset.company.com"
+      access_policies:
+        - name: "company-employees"
+          include:
+            - email_domain: "company.com"
+    monitoring:
+      enabled: true
+      prometheus:
+        retention_days: 14
+        storage_size: 10
+    backup:
+      enabled: true
+      frequency: "0 2 * * *"
+      destination: "gs://${GCP_STAGING_PROJECT}-backups/superset"
+      retention_days: 14
+
+  # Production environment - full featured
+  production:
+    type: production
+    environment: gcp
+    enabled: false  # Enable when ready
+    gcp:
+      project_id: "${GCP_PROD_PROJECT}"
+      region: "${GCP_REGION_PROD:-us-east1}"
+      zone: "${GCP_ZONE_PROD:-us-east1-b}"
+      credentials_path: "~/.gcp/prod-key.json"
+      service_account: "superset-prod@${GCP_PROD_PROJECT}.iam.gserviceaccount.com"
+    superset:
+      version: "5.0.0"  # Stable version
+      replicas: 3
+      autoscaling:
+        enabled: true
+        min_replicas: 3
+        max_replicas: 10
+        cpu_threshold: 70
+      resources:
+        cpu: "2"
+        memory: "4Gi"
+      plugins:
+        - "superset-plugin-chart-echarts"
+        - "superset-plugin-chart-handlebars"
+    database:
+      type: cloud-sql
+      tier: "db-n1-standard-2"  # Dedicated CPU
+      disk_size: 100
+      disk_type: "pd-ssd"
+      high_availability: true
+      password: "${DB_PASSWORD_PROD}"
+      backup:
+        enabled: true
+        time: "02:00"
+        retention_days: 30
+    cache:
+      type: redis
+      tier: "standard"
+      memory_size_gb: 4
+      high_availability: true
+      password: "${REDIS_PASSWORD_PROD}"
+    security:
+      ssl:
+        enabled: true
+        managed: true
+        domains: 
+          - "superset.company.com"
+          - "analytics.company.com"
+      oauth:
+        enabled: true
+        providers: ["google", "okta"]
+      vpc:
+        enabled: true
+        private_ip: true
+        cidr_range: "10.0.0.0/16"
+      secrets_backend: "secret-manager"
+    cloudflare:
+      enabled: true
+      tunnel_name: "superset-prod"
+      tunnel_id: "${CF_TUNNEL_ID_PROD}"
+      tunnel_secret: "${CF_TUNNEL_SECRET_PROD}"
+      hostname: "superset.company.com"
+      monitoring_hostname: "monitoring.superset.company.com"
+      metrics_hostname: "metrics.superset.company.com"
+      deployment_type: "gke"  # Use GKE for production
+      access_policies:
+        - name: "company-employees"
+          include:
+            - email_domain: "company.com"
+          require:
+            - mfa: true
+        - name: "external-partners"
+          include:
+            - email_domain: "partner.com"
+          require:
+            - purpose_justification: true
+    monitoring:
+      enabled: true
+      prometheus:
+        retention_days: 90
+        storage_size: 100
+      grafana:
+        admin_password: "${GRAFANA_ADMIN_PASSWORD}"
+      alerting:
+        enabled: true
+        channels:
+          - type: "email"
+            addresses: ["ops@company.com"]
+          - type: "slack"
+            webhook: "${SLACK_WEBHOOK_URL}"
+    backup:
+      enabled: true
+      frequency: "0 2 * * *"
+      destination: "gs://${GCP_PROD_PROJECT}-backups/superset"
+      retention_days: 90
+    features:
+      sql_lab: true
+      dashboard_emails: true
+      alerts: true
+      reports: true

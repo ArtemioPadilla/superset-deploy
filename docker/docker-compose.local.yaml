@@ -1,0 +1,202 @@
+# Docker Compose configuration for local deployments
+# This file extends docker-compose.yaml with local-specific services
+
+services:
+  # PostgreSQL database for local development
+  postgres:
+    image: postgres:15-alpine
+    platform: linux/amd64  # For Apple Silicon compatibility
+    container_name: superset_postgres
+    environment:
+      POSTGRES_DB: superset
+      POSTGRES_USER: superset
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-superset123}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-scripts:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U superset"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - superset_network
+
+  # Redis cache for local development
+  redis:
+    image: redis:7-alpine
+    platform: linux/amd64  # For Apple Silicon compatibility
+    container_name: superset_redis
+    command: >
+      sh -c "
+        if [ -n '${REDIS_PASSWORD}' ]; then
+          redis-server --requirepass ${REDIS_PASSWORD:-redis123}
+        else
+          redis-server
+        fi
+      "
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - superset_network
+
+  # Nginx load balancer for multi-instance testing
+  nginx:
+    image: nginx:alpine
+    platform: linux/amd64  # For Apple Silicon compatibility
+    container_name: superset_nginx
+    profiles: ["multi-instance"]
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "80:80"
+    depends_on:
+      - superset
+    networks:
+      - superset_network
+
+  # Prometheus for monitoring
+  prometheus:
+    image: prom/prometheus:latest
+    platform: linux/amd64  # For Apple Silicon compatibility
+    container_name: superset_prometheus
+    profiles: ["monitoring"]
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-7d}'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - superset_network
+
+  # Grafana for visualization
+  grafana:
+    image: grafana/grafana:latest
+    platform: linux/amd64  # For Apple Silicon compatibility
+    container_name: superset_grafana
+    profiles: ["monitoring"]
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - superset_network
+
+  # Mailhog for email testing
+  mailhog:
+    image: mailhog/mailhog:latest
+    platform: linux/amd64  # For Apple Silicon compatibility
+    container_name: superset_mailhog
+    profiles: ["email"]
+    ports:
+      - "1025:1025"  # SMTP
+      - "8025:8025"  # Web UI
+    networks:
+      - superset_network
+
+  # pgAdmin for database management
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    platform: linux/amd64  # For Apple Silicon compatibility
+    container_name: superset_pgadmin
+    profiles: ["tools"]
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@localhost}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    ports:
+      - "5050:80"
+    networks:
+      - superset_network
+
+  # Redis Commander for cache management
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    platform: linux/amd64  # For Apple Silicon compatibility
+    container_name: superset_redis_commander
+    profiles: ["tools"]
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis123}
+    ports:
+      - "8081:8081"
+    depends_on:
+      - redis
+    networks:
+      - superset_network
+
+  # Locust for load testing
+  locust:
+    image: locustio/locust:latest
+    platform: linux/amd64  # For Apple Silicon compatibility
+    container_name: superset_locust
+    profiles: ["performance"]
+    volumes:
+      - ./tests/load/locustfile.py:/home/locust/locustfile.py
+    ports:
+      - "8089:8089"
+    command: -f /home/locust/locustfile.py --host http://superset:8088
+    networks:
+      - superset_network
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+  pgadmin_data:
+    driver: local
+
+networks:
+  superset_network:
+    name: superset_network
+    driver: bridge
+
+# Usage:
+# 
+# Basic local development:
+# docker-compose -f docker-compose.yaml -f docker-compose.local.yaml up
+#
+# With monitoring:
+# docker-compose -f docker-compose.yaml -f docker-compose.local.yaml --profile monitoring up
+#
+# With email testing:
+# docker-compose -f docker-compose.yaml -f docker-compose.local.yaml --profile email up
+#
+# With database tools:
+# docker-compose -f docker-compose.yaml -f docker-compose.local.yaml --profile tools up
+#
+# For performance testing:
+# docker-compose -f docker-compose.yaml -f docker-compose.local.yaml --profile performance up
+#
+# All profiles:
+# docker-compose -f docker-compose.yaml -f docker-compose.local.yaml \
+#   --profile monitoring --profile email --profile tools --profile performance up

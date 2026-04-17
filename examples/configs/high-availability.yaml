@@ -1,0 +1,225 @@
+# High availability production configuration
+# This configuration provides maximum reliability and uptime
+
+global:
+  superset:
+    default_version: "5.0.0"  # Use stable version
+    default_admin_email: "ops@company.com"
+  monitoring:
+    retention_days: 90  # Long retention for analysis
+  backup:
+    retention_days: 90  # Long backup retention
+
+stacks:
+  production-ha:
+    type: production
+    environment: gcp
+    enabled: true
+    gcp:
+      project_id: "${GCP_PROD_PROJECT}"
+      # Multi-region deployment
+      region: "us-central1"
+      zone: "us-central1-a"  # Primary zone
+      service_account: "superset-prod@${GCP_PROD_PROJECT}.iam.gserviceaccount.com"
+    
+    superset:
+      version: "5.0.0"  # Stable, tested version
+      replicas: 5  # Odd number for consensus
+      
+      # Autoscaling for load handling
+      autoscaling:
+        enabled: true
+        min_replicas: 5  # Never go below 5
+        max_replicas: 20  # Handle traffic spikes
+        cpu_threshold: 60  # Scale early
+      
+      # Generous resources
+      resources:
+        cpu: "4"
+        memory: "8Gi"
+      
+      # Production-ready plugins
+      plugins:
+        - "superset-plugin-chart-echarts"
+        - "superset-plugin-chart-handlebars"
+    
+    database:
+      type: cloud-sql
+      # High-performance tier
+      tier: "db-n1-highmem-4"  # 26 GB RAM, 4 vCPUs
+      disk_size: 500  # Large disk
+      disk_type: "pd-ssd"  # SSD for performance
+      
+      # High availability
+      high_availability: true  # Regional HA
+      
+      # Automated backups
+      backup:
+        enabled: true
+        time: "02:00"
+        retention_days: 90
+        # Point-in-time recovery
+        frequency: "0 */6 * * *"  # Every 6 hours
+      
+      # Connection pool settings
+      max_connections: 1000
+      password: "${DB_PASSWORD_PROD}"
+    
+    cache:
+      type: redis
+      tier: "standard"  # Better performance than basic
+      memory_size_gb: 16  # Large cache
+      high_availability: true  # Regional Redis
+      password: "${REDIS_PASSWORD_PROD}"
+      
+      # Redis configuration
+      maxmemory_policy: "allkeys-lru"
+      timeout: 300
+    
+    security:
+      ssl:
+        enabled: true
+        managed: true
+        domains:
+          - "superset.company.com"
+          - "analytics.company.com"
+          - "bi.company.com"
+      
+      oauth:
+        enabled: true
+        providers: ["google", "okta"]
+      
+      vpc:
+        enabled: true
+        private_ip: true
+        cidr_range: "10.0.0.0/16"
+        # Network segmentation
+        subnets:
+          - name: "app"
+            cidr: "10.0.1.0/24"
+          - name: "db"
+            cidr: "10.0.2.0/24"
+          - name: "cache"
+            cidr: "10.0.3.0/24"
+      
+      # Use Secret Manager for all secrets
+      secrets_backend: "secret-manager"
+    
+    # Multi-region Cloudflare setup
+    cloudflare:
+      enabled: true
+      tunnel_name: "superset-prod-ha"
+      tunnel_id: "${CF_TUNNEL_ID_PROD}"
+      tunnel_secret: "${CF_TUNNEL_SECRET_PROD}"
+      
+      # Multiple hostnames for different use cases
+      hostname: "superset.company.com"
+      monitoring_hostname: "superset-monitoring.company.com"
+      metrics_hostname: "superset-metrics.company.com"
+      
+      deployment_type: "gke"  # GKE for better control
+      
+      # Strict access policies
+      access_policies:
+        - name: "employees"
+          include:
+            - email_domain: "company.com"
+          require:
+            - mfa: true
+            - device_posture: "managed"
+        - name: "admins"
+          include:
+            - group: "superset-admins@company.com"
+          require:
+            - mfa: true
+            - device_posture: "managed"
+            - geo: ["US", "CA", "GB"]  # Geo restrictions
+    
+    monitoring:
+      enabled: true
+      
+      prometheus:
+        retention_days: 90
+        storage_size: 500  # Large storage
+        # High availability Prometheus
+        replicas: 3
+        # Remote write for long-term storage
+        remote_write:
+          - url: "https://prometheus-long-term.company.com/api/v1/write"
+      
+      grafana:
+        admin_password: "${GRAFANA_ADMIN_PASSWORD}"
+        # Grafana HA
+        replicas: 3
+        database: "postgres"  # External DB for Grafana
+      
+      alerting:
+        enabled: true
+        # Multiple notification channels
+        channels:
+          - type: "pagerduty"
+            integration_key: "${PAGERDUTY_KEY}"
+          - type: "slack"
+            webhook: "${SLACK_WEBHOOK_URL}"
+          - type: "email"
+            addresses: ["ops@company.com", "oncall@company.com"]
+        
+        # Comprehensive alerts
+        rules:
+          - name: "high_cpu"
+            threshold: 80
+            duration: "5m"
+            severity: "warning"
+          - name: "high_memory"
+            threshold: 90
+            duration: "5m"
+            severity: "critical"
+          - name: "database_connection_failure"
+            duration: "1m"
+            severity: "critical"
+          - name: "pod_restart"
+            threshold: 3
+            duration: "10m"
+            severity: "warning"
+    
+    backup:
+      enabled: true
+      # Frequent backups
+      frequency: "0 */4 * * *"  # Every 4 hours
+      
+      # Multiple backup destinations
+      destination: "gs://${GCP_PROD_PROJECT}-backups/superset"
+      # Cross-region backup replication
+      replication:
+        - "gs://${GCP_PROD_PROJECT}-backups-eu/superset"
+        - "gs://${GCP_PROD_PROJECT}-backups-asia/superset"
+      
+      retention_days: 90
+      
+      # Backup validation
+      validation:
+        enabled: true
+        frequency: "0 6 * * 1"  # Weekly on Monday
+    
+    # Feature flags
+    features:
+      sql_lab: true
+      dashboard_emails: true
+      alerts: true
+      reports: true
+      row_level_security: true
+      
+    # Performance optimizations
+    performance:
+      # Query result caching
+      query_cache_timeout: 86400  # 24 hours
+      
+      # Dashboard caching
+      dashboard_cache_timeout: 3600  # 1 hour
+      
+      # Async query execution
+      async_queries: true
+      
+      # Connection pooling
+      sqlalchemy_pool_size: 50
+      sqlalchemy_pool_recycle: 3600

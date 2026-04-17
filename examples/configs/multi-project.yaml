@@ -1,0 +1,150 @@
+# Multi-project GCP deployment example
+# This shows how to deploy Superset to different GCP projects
+
+global:
+  superset:
+    default_version: "5.0.0"
+    default_admin_email: "admin@company.com"
+
+stacks:
+  # Personal development project
+  dev-personal:
+    type: minimal
+    environment: gcp
+    enabled: true
+    gcp:
+      # Personal GCP project with free tier resources
+      project_id: "john-dev-project"
+      region: "us-central1"
+      credentials_path: "~/.gcp/personal-dev.json"
+    superset:
+      version: "latest"
+      resources:
+        cpu: "0.25"  # Minimal CPU
+        memory: "512Mi"  # Minimal memory
+    database:
+      type: cloud-sql
+      tier: "db-f1-micro"  # Free tier
+      disk_size: 10
+      password: "${DEV_DB_PASSWORD}"
+
+  # Team shared development project
+  dev-team:
+    type: standard
+    environment: gcp
+    enabled: true
+    gcp:
+      # Team's shared development project
+      project_id: "acme-team-dev"
+      region: "us-west1"
+      credentials_path: "~/.gcp/team-dev.json"
+      service_account: "superset@acme-team-dev.iam.gserviceaccount.com"
+    superset:
+      version: "5.0.0"
+      replicas: 1
+      resources:
+        cpu: "1"
+        memory: "2Gi"
+    database:
+      type: cloud-sql
+      tier: "db-g1-small"
+      disk_size: 20
+      password: "${TEAM_DB_PASSWORD}"
+    cache:
+      type: redis
+      tier: "basic"
+      memory_size_gb: 1
+
+  # Department staging project
+  staging-dept:
+    type: standard
+    environment: gcp
+    enabled: true
+    gcp:
+      # Analytics department staging project
+      project_id: "acme-analytics-staging"
+      region: "us-central1"
+      credentials_path: "~/.gcp/dept-staging.json"
+      service_account: "superset@acme-analytics-staging.iam.gserviceaccount.com"
+    superset:
+      version: "5.0.0"
+      replicas: 2
+      resources:
+        cpu: "2"
+        memory: "4Gi"
+    database:
+      type: cloud-sql
+      tier: "db-n1-standard-1"
+      disk_size: 50
+      password: "${STAGING_DB_PASSWORD}"
+      backup:
+        enabled: true
+    cache:
+      type: redis
+      tier: "standard"
+      memory_size_gb: 2
+    monitoring:
+      enabled: true
+
+  # Company-wide production project
+  production:
+    type: production
+    environment: gcp
+    enabled: true
+    gcp:
+      # Main company production project
+      project_id: "acme-corp-production"
+      region: "us-east1"
+      credentials_path: "~/.gcp/prod.json"
+      service_account: "superset@acme-corp-production.iam.gserviceaccount.com"
+    superset:
+      version: "5.0.0"
+      replicas: 3
+      autoscaling:
+        enabled: true
+        min_replicas: 3
+        max_replicas: 15
+      resources:
+        cpu: "4"
+        memory: "8Gi"
+    database:
+      type: cloud-sql
+      tier: "db-n1-standard-4"
+      disk_size: 200
+      disk_type: "pd-ssd"
+      high_availability: true
+      password: "${PROD_DB_PASSWORD}"
+      backup:
+        enabled: true
+        retention_days: 90
+    cache:
+      type: redis
+      tier: "standard"
+      memory_size_gb: 8
+      high_availability: true
+    security:
+      vpc:
+        enabled: true
+        private_ip: true
+      secrets_backend: "secret-manager"
+    monitoring:
+      enabled: true
+      prometheus:
+        retention_days: 90
+    backup:
+      enabled: true
+      retention_days: 90
+
+  # Disaster recovery project
+  production-dr:
+    extends: production  # Inherit from production
+    enabled: false  # Enable during DR scenarios
+    gcp:
+      # DR project in different region
+      project_id: "acme-corp-production-dr"
+      region: "europe-west1"  # Different region for DR
+      credentials_path: "~/.gcp/prod-dr.json"
+      service_account: "superset@acme-corp-production-dr.iam.gserviceaccount.com"
+    backup:
+      # Restore from production backups
+      destination: "gs://acme-corp-production-dr-backups/superset"

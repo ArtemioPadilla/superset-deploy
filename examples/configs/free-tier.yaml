@@ -1,0 +1,136 @@
+# Free tier optimized configuration
+# This configuration is optimized to run within GCP's free tier limits
+
+global:
+  superset:
+    default_version: "5.0.0"  # Updated to latest version
+    default_admin_email: "admin@example.com"
+
+stacks:
+  # IMPORTANT: GCP Free Tier does NOT include:
+  # - Cloud SQL (PostgreSQL/MySQL) - minimum ~$7/month
+  # - Memorystore (Redis) - minimum ~$30/month
+  # - Load Balancers - ~$18/month
+  
+  # True free tier with SQLite (RECOMMENDED)
+  free-sqlite:
+    type: minimal
+    environment: gcp
+    enabled: true
+    gcp:
+      project_id: "${GCP_PROJECT}"
+      region: "us-central1"  # Must use US region for free tier
+    superset:
+      version: "5.0.0"
+      # Cloud Run free tier: 2M requests/month, 360K GB-seconds/month
+      resources:
+        cpu: "1"
+        memory: "2Gi"  # Use 2GB (free tier allows up to 4GB)
+      min_instances: 0  # Scale to zero when not in use
+      max_instances: 1  # Limit to control costs
+    database:
+      # SQLite is the ONLY database option for true free tier
+      type: sqlite
+      path: "/mnt/disks/gce-containers-mounts/gce-persistent-disks/superset-data/superset.db"
+    storage:
+      # Cloud Storage free tier: 5GB storage, 1GB egress/month
+      bucket_name: "${GCP_PROJECT}-superset-data"
+      location: "US"  # Multi-region for free tier
+    cache:
+      type: none  # No Redis/Memcached in free tier
+    security:
+      ssl:
+        enabled: true
+        managed: true  # Free managed SSL certificates
+    # Use Cloudflare tunnel for secure access without load balancer costs
+    cloudflare:
+      enabled: true
+      tunnel_name: "superset-free"
+      tunnel_id: "${CF_TUNNEL_ID}"
+      tunnel_secret: "${CF_TUNNEL_SECRET}"
+      hostname: "superset.yourdomain.com"
+      access_policies:
+        - name: "personal-access"
+          include:
+            - email: "your-email@example.com"
+    monitoring:
+      enabled: false  # Disable to save on storage/compute
+
+  # Local development (truly free - runs on your machine)
+  free-local:
+    type: minimal
+    environment: local
+    enabled: true
+    superset:
+      version: "5.0.0"
+      port: 8088
+      dev_mode: true
+    database:
+      # For local dev, you can use PostgreSQL or SQLite
+      # Option 1: SQLite (simplest)
+      type: sqlite
+      path: "./data/superset.db"
+      
+      # Option 2: PostgreSQL in Docker (uncomment below)
+      # type: postgresql
+      # host: "postgres"
+      # port: 5432
+      # name: "superset"
+      # user: "superset"
+      # password: "superset"
+    cache:
+      # Redis is optional for local dev
+      type: none
+      
+      # Uncomment for Redis in Docker:
+      # type: redis
+      # host: "redis"
+      # port: 6379
+
+  # Example showing what NOT to use for free tier
+  not-free-example:
+    type: standard
+    environment: gcp
+    enabled: false  # Just an example
+    gcp:
+      project_id: "${GCP_PROJECT}"
+      region: "us-central1"
+    superset:
+      version: "5.0.0"
+    database:
+      # WARNING: Cloud SQL is NOT free tier!
+      type: cloud-sql
+      tier: "db-f1-micro"  # Still costs ~$7-10/month
+    cache:
+      # WARNING: Memorystore is NOT free tier!
+      type: memorystore  # Costs ~$30/month minimum
+
+# 🆓 GCP Free Tier Guide:
+#
+# ✅ WHAT'S FREE:
+# - Cloud Run: 2M requests/month, 360K GB-seconds, 180K vCPU-seconds
+# - Cloud Storage: 5GB storage, 1GB egress/month  
+# - Cloud Build: 120 build-minutes/day
+# - SSL Certificates: Managed certificates are free
+# - Firestore: 1GB storage, 50K reads, 20K writes/day
+#
+# ❌ WHAT'S NOT FREE (avoid these):
+# - Cloud SQL (PostgreSQL/MySQL): minimum ~$7-10/month
+# - Memorystore (Redis): minimum ~$30/month  
+# - Load Balancers: ~$18/month
+# - VPC with NAT Gateway: ~$45/month
+# - Additional egress beyond 1GB: $0.12/GB
+#
+# 💡 MONEY-SAVING TIPS:
+# 1. Always use SQLite for database (not PostgreSQL)
+# 2. Set min_instances: 0 for scale-to-zero
+# 3. Use US regions only (us-central1, us-east1, us-west1)
+# 4. Use Cloudflare tunnel instead of Load Balancer
+# 5. Disable monitoring to save storage
+# 6. Set budget alerts at $1 to catch any charges
+# 7. Use local development for testing
+#
+# 🚀 QUICK START:
+# - For true $0/month: Use the 'free-sqlite' stack
+# - For development: Use the 'free-local' stack
+# - For learning: See 'not-free-example' for what to avoid

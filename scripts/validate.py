@@ -3,13 +3,13 @@
 
 import sys
 import os
-import yaml
 from pathlib import Path
+from pydantic import ValidationError
 
 # Add parent directory to path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from pulumi.config.validator import validate_system_config
+from pulumi.config.loader import load_system_config
 
 
 def main():
@@ -25,38 +25,48 @@ def main():
     print(f"🔍 Validating {config_path}...")
     
     try:
-        # Load configuration
-        with open(config_path, 'r') as f:
-            config = yaml.safe_load(f)
+        # Load and validate configuration using Pydantic
+        config = load_system_config(str(config_path))
         
-        # Validate
-        errors = validate_system_config(config)
+        print("✅ Configuration is valid!")
         
-        if errors:
-            print("\n❌ Validation failed with the following errors:")
-            for error in errors:
-                print(f"  • {error}")
-            sys.exit(1)
+        # Show configuration summary
+        print("\n📊 Configuration Summary:")
+        print(f"  Global Superset version: {config.global_config.superset.default_version}")
+        print(f"  Number of stacks: {len(config.stacks)}")
+        
+        # Show enabled stacks
+        enabled_stacks = config.get_enabled_stacks()
+        
+        if enabled_stacks:
+            print(f"\n📦 Enabled stacks:")
+            for name, stack in enabled_stacks.items():
+                print(f"  • {name}:")
+                print(f"    - Type: {stack.type}")
+                print(f"    - Environment: {stack.environment}")
+                print(f"    - Superset version: {stack.superset.version}")
+                if stack.environment == 'gcp':
+                    print(f"    - GCP project: {stack.gcp.project_id}")
+                    print(f"    - GCP region: {stack.gcp.region}")
         else:
-            print("✅ Configuration is valid!")
+            print("\n⚠️  Warning: No stacks are enabled")
             
-            # Show enabled stacks
-            stacks = config.get('stacks', {})
-            enabled_stacks = [
-                name for name, stack in stacks.items() 
-                if stack.get('enabled', True)
-            ]
+        # Show any validation warnings
+        print("\n💡 Note: Check console output above for any configuration warnings")
             
-            if enabled_stacks:
-                print(f"\n📦 Enabled stacks: {', '.join(enabled_stacks)}")
-            else:
-                print("\n⚠️  Warning: No stacks are enabled")
-            
-    except yaml.YAMLError as e:
-        print(f"❌ Error: Invalid YAML syntax: {e}")
+    except ValidationError as e:
+        print("\n❌ Validation failed with the following errors:")
+        for error in e.errors():
+            field_path = " -> ".join(str(x) for x in error['loc'])
+            print(f"  • {field_path}: {error['msg']}")
+        sys.exit(1)
+    except FileNotFoundError as e:
+        print(f"❌ Error: {e}")
         sys.exit(1)
     except Exception as e:
         print(f"❌ Error: {e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
 
 

@@ -1,0 +1,223 @@
+# Docker Compose para emular TODOS los servicios del GCP Free Tier localmente
+# Use con: docker-compose -f docker-compose.yaml -f docker-compose.full-free-tier.yaml up
+
+services:
+  superset:
+    platform: linux/amd64  # For Apple Silicon compatibility
+    # Limitar recursos como e2-micro
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'    # e2-micro tiene 0.25 vCPU compartido
+          memory: 1024M   # e2-micro tiene 1 GB RAM
+        reservations:
+          cpus: '0.1'     # Mínimo garantizado
+          memory: 512M    # Mínimo 512 MB
+    
+    # Variables de entorno para simular free tier completo
+    environment:
+      # Configuración de recursos
+      - SUPERSET_WORKERS=1
+      - SUPERSET_CELERY_WORKERS=0
+      - GUNICORN_WORKERS=2
+      - GUNICORN_THREADS=2
+      - GUNICORN_TIMEOUT=300
+      - SUPERSET_WEBSERVER_TIMEOUT=300
+      
+      # Límites del free tier
+      - SUPERSET_ROW_LIMIT=5000
+      - SUPERSET_SAMPLES_ROW_LIMIT=1000
+      - SUPERSET_SQL_MAX_ROW=10000
+      
+      # Desactivar features costosos
+      - SUPERSET_LOAD_EXAMPLES=no
+      - THUMBNAIL_CACHE_DEFAULT_TIMEOUT=0
+      - ALERT_REPORTS_FEATURE_FLAG=false
+      
+      # SQLite con límites de Firestore
+      - SQLALCHEMY_DATABASE_URI=sqlite:////app/superset_home/superset-free.db
+      - SQLITE_JOURNAL_MODE=WAL
+      - SQLITE_SYNCHRONOUS=NORMAL
+      - FIRESTORE_MAX_READS_DAY=50000
+      - FIRESTORE_MAX_WRITES_DAY=20000
+      
+      # Simular servicios GCP
+      - GCP_PROJECT=local-free-tier
+      - CLOUD_STORAGE_BUCKET=local-superset-data
+      - PUBSUB_EMULATOR_HOST=pubsub:8085
+      - FIRESTORE_EMULATOR_HOST=firestore:8080
+    
+    # Volúmenes con límites
+    volumes:
+      - superset_home_free:/app/superset_home
+      - cloud_storage_free:/app/cloud-storage
+      - ./local/superset_config_v5.py:/app/pythonpath/superset_config.py:ro
+    
+    # Health check conservador
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8088/health"]
+      interval: 60s
+      timeout: 30s
+      retries: 3
+      start_period: 60s
+    
+    # Rate limiting para simular límites de requests
+    labels:
+      - "traefik.http.middlewares.rate-limit.ratelimit.average=23"  # ~2M/mes = 23/seg
+      - "traefik.http.middlewares.rate-limit.ratelimit.burst=100"
+
+  # Emulador de Firestore (para base de datos)
+  firestore:
+    image: gcr.io/google.com/cloudsdktool/cloud-sdk:emulators
+    platform: linux/amd64  # For Apple Silicon compatibility
+    container_name: superset_firestore
+    command: gcloud emulators firestore start --host-port=0.0.0.0:8080
+    ports:
+      - "8080:8080"
+    volumes:
+      - firestore_data:/opt/data
+    environment:
+      - FIRESTORE_PROJECT_ID=local-free-tier
+    deploy:
+      resources:
+        limits:
+          cpus: '0.1'
+          memory: 256M
+
+  # Emulador de Pub/Sub
+  pubsub:
+    image: gcr.io/google.com/cloudsdktool/cloud-sdk:emulators
+    platform: linux/amd64  # For Apple Silicon compatibility
+    container_name: superset_pubsub
+    command: gcloud emulators pubsub start --host-port=0.0.0.0:8085
+    ports:
+      - "8085:8085"
+    environment:
+      - PUBSUB_PROJECT_ID=local-free-tier
+    deploy:
+      resources:
+        limits:
+          cpus: '0.1'
+          memory: 256M
+
+  # Servidor de almacenamiento local (emula Cloud Storage)
+  minio:
+    image: minio/minio:latest
+    platform: linux/amd64  # For Apple Silicon compatibility
+    container_name: superset_storage
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+      - MINIO_STORAGE_CLASS_STANDARD=EC:0
+    volumes:
+      - cloud_storage_free:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '0.1'
+          memory: 256M
+
+  # Prometheus con límites (simula Cloud Monitoring)
+  prometheus:
+    image: prom/prometheus:latest
+    platform: linux/amd64  # For Apple Silicon compatibility
+    container_name: superset_prometheus_free
+    volumes:
+      - ./monitoring/prometheus-free-tier.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data_free:/prometheus
+    ports:
+      - "9090:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=7d'  # Free tier: 7 días
+      - '--storage.tsdb.retention.size=1GB'  # Limitar tamaño
+    deploy:
+      resources:
+        limits:
+          cpus: '0.1'
+          memory: 256M
+
+  # Grafana ligero (opcional)
+  grafana:
+    image: grafana/grafana:latest
+    platform: linux/amd64  # For Apple Silicon compatibility
+    container_name: superset_grafana_free
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=
+      - GF_SERVER_ENABLE_GZIP=true
+    volumes:
+      - grafana_data_free:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.1'
+          memory: 256M
+
+  # Traefik para rate limiting (simula Cloud Run limits)
+  traefik:
+    image: traefik:v2.10
+    platform: linux/amd64  # For Apple Silicon compatibility
+    container_name: superset_rate_limiter
+    command:
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+    ports:
+      - "80:80"
+      - "8090:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    deploy:
+      resources:
+        limits:
+          cpus: '0.1'
+          memory: 128M
+
+  # No incluir Redis (no está en free tier)
+  redis:
+    profiles:
+      - never
+
+  # No incluir PostgreSQL (no está en free tier)
+  db:
+    profiles:
+      - never
+
+# Volúmenes con límites de tamaño
+volumes:
+  superset_home_free:
+    driver: local
+  
+  cloud_storage_free:
+    driver: local
+  
+  firestore_data:
+    driver: local
+  
+  prometheus_data_free:
+    driver: local
+  
+  grafana_data_free:
+    driver: local
+
+# Red optimizada
+networks:
+  default:
+    driver: bridge
+    driver_opts:
+      com.docker.network.driver.mtu: 1400  # MTU para Cloud Run

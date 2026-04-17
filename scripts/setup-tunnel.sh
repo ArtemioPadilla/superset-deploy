@@ -1,5 +1,16 @@
 #!/bin/bash
-set -e
+# Setup script for Cloudflare Tunnel
+
+# Get the script directory
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+# Source common functions
+if [ -f "$SCRIPT_DIR/common.sh" ]; then
+    source "$SCRIPT_DIR/common.sh"
+else
+    # Fallback
+    set -e
+fi
 
 echo "🔐 Setting up Cloudflare Tunnel for Apache Superset"
 

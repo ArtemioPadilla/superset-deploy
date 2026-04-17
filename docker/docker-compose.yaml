@@ -1,25 +1,31 @@
-version: '3.8'
-
 services:
-  # Cloudflare Tunnel for secure access
+  # Cloudflare Tunnel for secure access (OPTIONAL - only if using Cloudflare)
   cloudflared:
     image: cloudflare/cloudflared:latest
     container_name: superset_cloudflared
     restart: unless-stopped
-    command: tunnel --config /etc/cloudflared/config.yaml run
+    command: 
+      - tunnel
+      - --no-autoupdate
+      - run
+      - --token
+      - ${CLOUDFLARE_TUNNEL_TOKEN}
     environment:
       - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
-    volumes:
-      - ./cloudflared:/etc/cloudflared
+      - CLOUDFLARE_TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+      - CLOUDFLARE_HOSTNAME=${CLOUDFLARE_HOSTNAME:-localhost}
     depends_on:
       - superset
     profiles:
-      - cloudflare
+      - cloudflare  # Only runs when explicitly enabled with --profile cloudflare
 
   superset:
-    image: apache/superset:${SUPERSET_VERSION:-3.0.0}
+    # Version can be overridden by SUPERSET_VERSION env var or defaults to 3.1.0
+    # To use version from system.yaml, set SUPERSET_VERSION before running docker-compose
+    image: apache/superset:${SUPERSET_VERSION:-5.0.0}
+    platform: linux/amd64  # For Apple Silicon compatibility
     container_name: superset_app
-    command: ["/app/docker/docker-bootstrap.sh", "app-gunicorn"]
+    command: ["sh", "-c", "superset db upgrade && superset fab create-admin --username $$SUPERSET_ADMIN_USERNAME --firstname Admin --lastname User --email $$SUPERSET_ADMIN_EMAIL --password $$SUPERSET_ADMIN_PASSWORD || true && superset init && gunicorn --bind 0.0.0.0:8088 --timeout 120 --workers 2 --worker-class gthread --threads 20 'superset.app:create_app()'"]
     restart: unless-stopped
     # Remove public port exposure when using Cloudflare
     ports:
@@ -34,11 +40,8 @@ services:
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
     volumes:
       - superset_home:/app/superset_home
-      - ./local/superset_config.py:/app/pythonpath/superset_config.py
-      - ./local/docker-init.sh:/app/docker-init.sh
-    depends_on:
-      - db
-      - redis
+      - ./local/superset_config_standard.py:/app/pythonpath/superset_config.py
+    # Note: db and redis are optional - will use SQLite if not available
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8088/health"]
       interval: 30s
@@ -47,9 +50,10 @@ services:
       start_period: 30s
 
   superset-init:
-    image: apache/superset:${SUPERSET_VERSION:-3.0.0}
+    image: apache/superset:${SUPERSET_VERSION:-5.0.0}
+    platform: linux/amd64  # For Apple Silicon compatibility
     container_name: superset_init
-    command: ["/app/docker-init.sh"]
+    command: ["sh", "-c", "echo 'Initializing database...' && superset db upgrade && echo 'Database initialized!'"]
     environment:
       - SUPERSET_SECRET_KEY=${SUPERSET_SECRET_KEY:-your-secret-key-here}
       - SUPERSET_ADMIN_USERNAME=${SUPERSET_ADMIN_USERNAME:-admin}
@@ -59,16 +63,14 @@ services:
       - DATABASE_URL=${DATABASE_URL:-sqlite:////app/superset_home/superset.db}
     volumes:
       - superset_home:/app/superset_home
-      - ./local/superset_config.py:/app/pythonpath/superset_config.py
-      - ./local/docker-init.sh:/app/docker-init.sh
-    depends_on:
-      - db
-      - redis
+      - ./local/superset_config_standard.py:/app/pythonpath/superset_config.py
+    # Note: db and redis are optional - will use SQLite if not available
 
   superset-worker:
-    image: apache/superset:${SUPERSET_VERSION:-3.0.0}
+    image: apache/superset:${SUPERSET_VERSION:-5.0.0}
+    platform: linux/amd64  # For Apple Silicon compatibility
     container_name: superset_worker
-    command: ["/app/docker/docker-bootstrap.sh", "worker"]
+    command: ["sh", "-c", "celery --app=superset.tasks.celery_app:app worker -l INFO"]
     restart: unless-stopped
     environment:
       - SUPERSET_SECRET_KEY=${SUPERSET_SECRET_KEY:-your-secret-key-here}
@@ -76,17 +78,16 @@ services:
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
     volumes:
       - superset_home:/app/superset_home
-      - ./local/superset_config.py:/app/pythonpath/superset_config.py
-    depends_on:
-      - db
-      - redis
+      - ./local/superset_config_standard.py:/app/pythonpath/superset_config.py
+    # Note: db and redis are optional - will use SQLite if not available
     profiles:
       - worker
 
   superset-beat:
-    image: apache/superset:${SUPERSET_VERSION:-3.0.0}
+    image: apache/superset:${SUPERSET_VERSION:-5.0.0}
+    platform: linux/amd64  # For Apple Silicon compatibility
     container_name: superset_beat
-    command: ["/app/docker/docker-bootstrap.sh", "beat"]
+    command: ["sh", "-c", "celery --app=superset.tasks.celery_app:app beat -l INFO"]
     restart: unless-stopped
     environment:
       - SUPERSET_SECRET_KEY=${SUPERSET_SECRET_KEY:-your-secret-key-here}
@@ -94,13 +95,12 @@ services:
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
     volumes:
       - superset_home:/app/superset_home
-      - ./local/superset_config.py:/app/pythonpath/superset_config.py
-    depends_on:
-      - db
-      - redis
+      - ./local/superset_config_standard.py:/app/pythonpath/superset_config.py
+    # Note: db and redis are optional - will use SQLite if not available
     profiles:
       - worker
 
+  # PostgreSQL Database (OPTIONAL - use --profile postgres to enable)
   db:
     image: postgres:15-alpine
     container_name: superset_db
@@ -117,8 +117,9 @@ services:
       timeout: 5s
       retries: 5
     profiles:
-      - postgres
+      - postgres  # Only runs with --profile postgres
 
+  # Redis Cache (OPTIONAL - use --profile redis or --profile postgres to enable)
   redis:
     image: redis:7-alpine
     container_name: superset_redis
@@ -130,6 +131,9 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    profiles:
+      - redis
+      - postgres  # Also enabled with postgres profile
 
   # Monitoring stack (optional)
   prometheus:

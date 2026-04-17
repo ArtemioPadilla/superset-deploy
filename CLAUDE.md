@@ -10,8 +10,11 @@ This repository contains a modular Apache Superset deployment solution using Pul
 
 ### Setup and Development
 ```bash
-# Initial setup
+# Initial setup (creates .venv automatically)
 make setup
+
+# Activate virtual environment (optional, Makefile handles it)
+source .venv/bin/activate
 
 # Deploy a stack (ENV can be: dev, staging, production)
 make deploy ENV=dev
@@ -32,6 +35,13 @@ make dev
 make setup-tunnel
 make dev-tunnel
 ```
+
+### Virtual Environment
+The project uses a Python virtual environment in `.venv/`:
+- Created automatically by `make setup`
+- All Makefile commands use this environment
+- Manual activation: `source .venv/bin/activate`
+- Dependencies installed in isolation
 
 ### Pulumi Commands
 ```bash

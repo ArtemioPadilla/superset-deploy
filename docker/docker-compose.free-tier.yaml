@@ -1,0 +1,79 @@
+# Docker Compose para emular GCP Free Tier localmente
+# Use con: docker-compose -f docker-compose.yaml -f docker-compose.free-tier.yaml up
+
+services:
+  superset:
+    platform: linux/amd64  # For Apple Silicon compatibility
+    # Aplicar límites de recursos como e2-micro
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'    # e2-micro tiene 0.25 vCPU
+          memory: 1024M   # e2-micro tiene 1 GB RAM
+        reservations:
+          cpus: '0.1'     # Mínimo garantizado
+          memory: 512M    # Mínimo 512 MB
+    
+    # Variables de entorno para simular free tier
+    environment:
+      # Configuración optimizada para recursos limitados
+      - SUPERSET_WORKERS=1              # Mínimo de workers
+      - SUPERSET_CELERY_WORKERS=0       # No Celery en free tier
+      - GUNICORN_WORKERS=2              # 2 workers para Gunicorn
+      - GUNICORN_THREADS=2              # 2 threads por worker
+      - GUNICORN_TIMEOUT=300            # 5 minutos timeout
+      - SUPERSET_WEBSERVER_TIMEOUT=300  # Mismo timeout
+      
+      # Optimizaciones de memoria
+      - SUPERSET_ROW_LIMIT=5000         # Limitar rows por query
+      - SUPERSET_SAMPLES_ROW_LIMIT=1000 # Limitar samples
+      - SUPERSET_SQL_MAX_ROW=10000      # Máximo rows SQL Lab
+      
+      # Deshabilitar features que consumen recursos
+      - SUPERSET_LOAD_EXAMPLES=no       # No cargar ejemplos
+      - THUMBNAIL_CACHE_DEFAULT_TIMEOUT=0 # No thumbnails
+      - ALERT_REPORTS_FEATURE_FLAG=false  # No alertas/reportes
+      
+      # SQLite optimizaciones
+      - SQLALCHEMY_DATABASE_URI=sqlite:////app/superset_home/superset-free.db
+      - SQLITE_JOURNAL_MODE=WAL         # Write-Ahead Logging
+      - SQLITE_SYNCHRONOUS=NORMAL       # Balance performance/safety
+    
+    # Volúmenes con límites
+    volumes:
+      - superset_home_free:/app/superset_home
+      - ./local/superset_config_free_tier.py:/app/pythonpath/superset_config.py:ro
+    
+    # Health check más conservador
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8088/health"]
+      interval: 60s    # Revisar cada minuto
+      timeout: 30s     # 30 segundos timeout
+      retries: 3       # 3 intentos
+      start_period: 60s # 1 minuto para iniciar
+
+  # No incluir Redis en free tier
+  redis:
+    profiles:
+      - never  # Efectivamente deshabilita Redis
+
+  # No incluir PostgreSQL en free tier
+  db:
+    profiles:
+      - never  # Efectivamente deshabilita PostgreSQL
+
+# Volúmenes con límites de tamaño
+volumes:
+  superset_home_free:
+    driver: local
+    driver_opts:
+      type: none
+      device: ${PWD}/data/free-tier
+      o: bind,size=5G  # Limitar a 5GB como Cloud Storage
+
+# Red optimizada
+networks:
+  default:
+    driver: bridge
+    driver_opts:
+      com.docker.network.driver.mtu: 1400  # MTU más pequeño para Cloud Run

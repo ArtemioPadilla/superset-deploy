@@ -1,177 +1,312 @@
-# System configuration for Apache Superset deployments
-# This file defines all stacks and their configurations
+# Apache Superset Deploy - System Configuration
+# ==============================================
+# This file controls all deployment configurations
+# Copy to system.yaml and customize for your needs
+#
+# QUICK START:
+# 1. Copy this file: cp system.yaml.example system.yaml
+# 2. Choose a stack below and set enabled: true
+# 3. Run: make deploy ENV=<stack-name>
+#
+# FREE TIER DEPLOYMENT:
+# Use the 'gcp-free-tier' stack for $0/month hosting!
 
-# Global settings applied to all stacks
+# Global defaults (inherited by all stacks unless overridden)
 global:
   superset:
-    default_version: "3.0.0"
+    default_version: "5.0.0"  # Superset version to use
     default_admin_email: "admin@example.com"
   monitoring:
-    retention_days: 30
+    retention_days: 30        # How long to keep metrics
   backup:
-    retention_days: 7
+    retention_days: 7         # How long to keep backups
 
-# Stack definitions
+# =============================================================================
+# DEPLOYMENT STACKS
+# =============================================================================
+# Each stack is a complete deployment configuration
+# Set 'enabled: true' for the stack you want to deploy
+
 stacks:
-  # Local development stack - minimal setup
-  dev:
-    type: minimal
-    environment: local
-    enabled: true
+  # -------------------------------------------------------------------------
+  # LOCAL DEVELOPMENT (Quick Start - 3 minutes)
+  # -------------------------------------------------------------------------
+  # Perfect for: Testing, development, learning Superset
+  # Cost: $0 (runs on your machine)
+  local-dev:
+    type: minimal           # Simple SQLite setup
+    environment: local      # Runs in Docker
+    enabled: false          # <-- SET TO true TO USE THIS STACK
     superset:
-      version: "3.0.0"
-      port: 8088
-      dev_mode: true
+      version: "${SUPERSET_VERSION:-5.0.0}"  # Uses env var or default
+      port: 8088                             # Access at localhost:8088
+      dev_mode: true                         # Enables debug features
+      resources:
+        cpu: "1"                             # 1 CPU core
+        memory: "2Gi"                        # 2GB RAM
     database:
-      type: sqlite
-      path: ./data/superset.db
+      type: sqlite                           # Simple file-based DB
+      path: ./data/superset.db              # Local storage
     cache:
-      type: none
+      type: none                             # No Redis needed
+    features:
+      sql_lab: true                          # Enable SQL editor
+      dashboard_emails: false                # Email requires setup
 
-  # Staging environment - standard setup on GCP
+  # -------------------------------------------------------------------------
+  # GCP FREE TIER ($0/month! 🎉)
+  # -------------------------------------------------------------------------
+  # Perfect for: Personal projects, small teams, proof of concepts
+  # Limits: 2M requests/month, 50 hours runtime/month
+  gcp-free-tier:
+    type: minimal
+    environment: gcp
+    enabled: false          # <-- SET TO true TO USE THIS STACK
+    gcp:
+      project_id: "${GCP_PROJECT}"      # Your GCP project ID
+      region: "us-central1"             # MUST be us-central1/east1/west1 for free tier
+      zone: "us-central1-a"
+      # credentials_path: "~/keys/gcp.json"  # Optional: path to service account key
+    superset:
+      version: "5.0.0"
+      service_type: "cloud-run"      # Serverless, scales to zero
+      replicas: 1
+      autoscaling:
+        min_replicas: 0              # IMPORTANT: Scale to zero for free tier
+        max_replicas: 1              # Stay within free limits
+      resources:
+        cpu: "1"                     # 1 vCPU
+        memory: "2Gi"                # 2GB RAM (uses ~360K GB-seconds/month)
+    database:
+      type: sqlite                   # No Cloud SQL in free tier
+      path: /mnt/gcs/superset.db    # Stored in Cloud Storage
+    storage:
+      type: "cloud-storage"
+      bucket: "${GCP_PROJECT}-superset-free"  # Auto-created
+      size_limit: "5Gi"              # Free tier limit
+    cache:
+      type: none                     # No Redis in free tier
+    # Free tier cost: $0/month if under limits!
+
+  # -------------------------------------------------------------------------
+  # STAGING ENVIRONMENT (~$50/month)
+  # -------------------------------------------------------------------------
+  # Perfect for: Small businesses, testing production features
+  # Includes: PostgreSQL, Redis, backups
   staging:
     type: standard
     environment: gcp
-    enabled: true
+    enabled: false          # <-- SET TO true TO USE THIS STACK
     gcp:
-      project_id: "your-gcp-project"
+      project_id: "${GCP_STAGING_PROJECT:-my-staging-project}"
       region: "us-central1"
-      zone: "us-central1-a"
     superset:
-      version: "3.0.0"
-      replicas: 1
+      version: "5.0.0"
+      service_type: "cloud-run"
+      replicas: 2                    # Two instances for reliability
+      autoscaling:
+        enabled: true
+        min_replicas: 1              # Always one running
+        max_replicas: 5              # Scale up to 5 during peaks
       resources:
-        cpu: "1"
-        memory: "2Gi"
+        cpu: "2"                     # 2 vCPUs
+        memory: "4Gi"                # 4GB RAM
     database:
-      type: "cloud-sql"
-      tier: "db-f1-micro"  # Free tier eligible
-      disk_size: 10
+      type: cloud-sql                # Managed PostgreSQL
+      tier: "db-f1-micro"           # Lowest tier (~$10/month)
+      disk_size: 10                  # 10GB storage
+      disk_type: "pd-standard"       # Standard persistent disk
+      high_availability: false       # No HA to save costs
       backup:
         enabled: true
-        time: "02:00"
+        time: "02:00"                # Daily at 2 AM
+        retention_days: 7            # Keep for 1 week
     cache:
-      type: "redis"
-      tier: "basic"
-      memory_size_gb: 1
+      type: redis                    # Managed Redis
+      tier: "basic"                  # Basic tier (~$35/month)
+      memory_size_gb: 1              # 1GB memory
+      redis_version: "6.x"           # Redis 6.x
+      high_availability: false       # No HA to save costs
+    monitoring:
+      enabled: true                  # Basic monitoring
+      prometheus:
+        retention_days: 15           # Keep metrics for 15 days
+        storage_size: 50             # 50GB for metrics
+      grafana:
+        admin_password: "${GRAFANA_ADMIN_PASSWORD:-admin}"
+        anonymous_access: false      # Require login
     security:
       ssl:
-        enabled: true
-        managed: true
+        enabled: true                # HTTPS enabled
+        managed: true                # GCP manages certificates
       oauth:
-        enabled: false
-    cloudflare:
-      enabled: false
-      tunnel_name: "superset-staging"
-      hostname: "superset-staging.example.com"
-      access_policies:
-        - name: "internal-users"
-          include:
-            - email_domain: "company.com"
+        enabled: false               # Enable for production
+        # providers:
+        #   - name: google
+        #     client_id: "${OAUTH_CLIENT_ID}"
+        #     client_secret: "${OAUTH_CLIENT_SECRET}"
+    # Estimated cost: ~$50/month (SQL: $10, Redis: $35, Run: $5)
 
-  # Production environment - full featured stack
+  # -------------------------------------------------------------------------
+  # PRODUCTION ENVIRONMENT (~$200+/month)
+  # -------------------------------------------------------------------------
+  # Perfect for: Medium to large businesses, high availability needs
+  # Includes: GKE, HA database, HA Redis, full monitoring
   production:
     type: production
     environment: gcp
-    enabled: false
+    enabled: false          # <-- SET TO true TO USE THIS STACK
     gcp:
-      project_id: "your-gcp-project"
+      project_id: "${GCP_PROD_PROJECT:-my-production-project}"
       region: "us-central1"
-      zone: "us-central1-a"
+      # Optional: Multi-region for disaster recovery
+      multi_region:
+        enabled: false
+        regions: ["us-central1", "us-east1"]
     superset:
-      version: "3.0.0"
-      replicas: 3
+      version: "5.0.0"               # Use stable version
+      service_type: "gke"            # Kubernetes for advanced features
+      replicas: 3                    # Three instances minimum
       autoscaling:
         enabled: true
-        min_replicas: 2
-        max_replicas: 10
-        cpu_threshold: 70
+        min_replicas: 3              # Always 3 running
+        max_replicas: 10             # Scale up to 10
+        target_cpu_utilization: 70   # Scale at 70% CPU
       resources:
-        cpu: "2"
-        memory: "4Gi"
+        cpu: "4"                     # 4 vCPUs limit
+        memory: "8Gi"                # 8GB RAM limit
+        requests:                    # Guaranteed resources
+          cpu: "2"                   # 2 vCPUs guaranteed
+          memory: "4Gi"              # 4GB RAM guaranteed
     database:
-      type: "cloud-sql"
-      tier: "db-n1-standard-2"
-      disk_size: 100
-      disk_type: "pd-ssd"
-      high_availability: true
+      type: cloud-sql
+      tier: "db-n1-standard-2"       # Production tier (~$100/month)
+      disk_size: 100                 # 100GB SSD
+      disk_type: "pd-ssd"            # SSD for performance
+      high_availability: true        # Automatic failover
       backup:
         enabled: true
-        time: "02:00"
-        location: "us"
-        retention_days: 30
+        time: "02:00"                # Daily backups
+        retention_days: 30           # Keep for 30 days
+        location: "us"               # Geo-redundant backups
+      # Read replicas for performance
+      read_replicas:
+        - name: "replica-1"
+          zone: "us-central1-b"      # Different zone
+        - name: "replica-2"
+          zone: "us-central1-c"      # Another zone
     cache:
-      type: "redis"
-      tier: "standard"
-      memory_size_gb: 5
-      high_availability: true
+      type: redis
+      tier: "standard"               # Production tier (~$150/month)
+      memory_size_gb: 5              # 5GB memory
+      redis_version: "6.x"
+      high_availability: true        # Automatic failover
+      redis_configs:
+        maxmemory-policy: "allkeys-lru"  # LRU eviction
+        timeout: "300"               # 5 min connection timeout
     monitoring:
-      enabled: true
+      enabled: true                  # Full observability
       prometheus:
-        retention_days: 30
-        storage_size: 100
+        retention_days: 30           # 30 days of metrics
+        storage_size: 100            # 100GB storage
+        high_availability: true      # HA Prometheus
       grafana:
-        enabled: true
-        admin_password_secret: "grafana-admin-password"
+        admin_password: "${GRAFANA_ADMIN_PASSWORD}"
+        anonymous_access: false
+        plugins:                     # Useful visualization plugins
+          - "grafana-piechart-panel"
+          - "grafana-worldmap-panel"
       alerting:
-        enabled: true
+        enabled: true                # 24/7 alerting
         channels:
           - type: "email"
-            recipients: ["ops@example.com"]
+            addresses: ["oncall@company.com"]
           - type: "slack"
-            webhook_secret: "slack-webhook-url"
+            webhook_url: "${SLACK_WEBHOOK_URL}"
+          - type: "pagerduty"       # For critical alerts
+            integration_key: "${PAGERDUTY_KEY}"
     security:
       ssl:
         enabled: true
-        managed: true
-      oauth:
-        enabled: true
-        providers:
-          - google
-          - github
+        managed: false               # Custom certificates
+        cert_path: "/secrets/tls.crt"
+        key_path: "/secrets/tls.key"
       vpc:
+        enabled: true                # Private network
+        name: "superset-vpc"
+        cidr: "10.0.0.0/16"          # Private IP range
+        private_google_access: true  # Access GCP services privately
+      firewall:
         enabled: true
-        private_ip: true
-      secrets:
-        backend: "secret-manager"
-    cloudflare:
+        allowed_ips:
+          - "0.0.0.0/0"              # Cloudflare will filter
+      workload_identity:
+        enabled: true                # Best practice for GKE
+        service_account: "superset-wi@${GCP_PROJECT}.iam.gserviceaccount.com"
+    # Estimated cost: ~$200-300/month depending on usage
+    backup:
       enabled: true
+      schedule: "0 2 * * *"          # Daily at 2 AM
+      retention_days: 30             # Keep for 30 days
+      destinations:
+        - type: "gcs"                # Primary backup
+          bucket: "${GCP_PROJECT}-superset-backups"
+          path: "/backups/production/"
+        - type: "cross-region"       # Disaster recovery
+          bucket: "${GCP_PROJECT}-superset-backups-dr"
+          region: "us-east1"         # Different region
+    # Cloudflare Zero Trust (recommended for security)
+    cloudflare:
+      enabled: false                 # Enable for zero-trust access
       tunnel_name: "superset-production"
-      hostname: "superset.company.com"
-      monitoring_hostname: "monitoring.company.com"
-      metrics_hostname: "metrics.company.com"
-      deployment_type: "cloudrun"  # or "gke" for Kubernetes
+      hostname: "analytics.company.com"
       access_policies:
         - name: "employees"
           include:
-            - email_domain: "company.com"
-            - github_org: "company-org"
-        - name: "contractors"
-          include:
-            - email: ["contractor1@example.com", "contractor2@example.com"]
+            - email_domain: "company.com"    # Your domain
+            - github_org: "company-github"   # Or GitHub org
           require:
-            - purpose_justification: true
-    backup:
-      enabled: true
-      frequency: "0 2 * * *"  # Daily at 2 AM
-      destination: "gs://your-backup-bucket"
-      retention_days: 30
+            - mfa: true              # Require 2FA
 
-  # Custom stack example
-  custom:
-    type: standard
-    environment: gcp
-    enabled: false
-    extends: staging  # Inherit settings from staging
-    superset:
-      replicas: 2
-      plugins:
-        - "superset-plugin-chart-echarts"
-        - "superset-plugin-chart-handlebars"
-    database:
-      tier: "db-n1-standard-1"
-    features:
-      sql_lab: true
-      dashboard_emails: true
-      alerts: true
-      reports: true
+# =============================================================================
+# ADVANCED EXAMPLES
+# =============================================================================
+
+# Multi-project deployment (different GCP projects per environment)
+multi_project_example:
+  personal:
+    extends: local-dev               # Inherit all settings
+    gcp:
+      project_id: "my-personal-project"
+  
+  company_staging:
+    extends: staging
+    gcp:
+      project_id: "company-staging-123"
+      organization_id: "123456789"   # Your org ID
+  
+  company_production:
+    extends: production
+    gcp:
+      project_id: "company-prod-456"
+      organization_id: "123456789"
+      billing_account: "ABCDEF-123456-789012"  # Specific billing
+
+# Environment variable usage (all fields support ${VAR} syntax)
+variable_examples:
+  project: "${GCP_PROJECT}"                      # From environment
+  region: "${GCP_REGION:-us-central1}"           # With default
+  bucket: "${GCP_PROJECT}-${ENV}-data"           # Multiple vars
+  database_url: "postgresql://${DB_USER}:${DB_PASS}@${DB_HOST}/${DB_NAME}"
+
+# =============================================================================
+# NEXT STEPS:
+# 1. Copy this file: cp system.yaml.example system.yaml
+# 2. Choose your deployment type (local-dev, gcp-free-tier, etc.)
+# 3. Set enabled: true for your chosen stack
+# 4. Set any required environment variables in .env
+# 5. Run: make deploy ENV=<your-stack-name>
+#
+# For help: make help
+# Full docs: https://github.com/artemiopadilla/superset-deploy
+# =============================================================================

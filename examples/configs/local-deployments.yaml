@@ -1,0 +1,272 @@
+# Local deployment configurations for different use cases
+# This file shows various local Docker-based Superset deployments
+
+global:
+  superset:
+    default_version: "5.0.0"
+    default_admin_email: "admin@localhost"
+  monitoring:
+    retention_days: 7  # Short retention for local
+  backup:
+    retention_days: 3  # Minimal backup retention
+
+stacks:
+  # 1. Minimal local development - SQLite only
+  local-minimal:
+    type: minimal
+    environment: local
+    enabled: true
+    superset:
+      version: "latest"  # Use latest for development
+      port: 8088
+      dev_mode: true
+      resources:
+        cpu: "0.5"
+        memory: "1Gi"
+    database:
+      type: sqlite
+      path: ./data/superset-minimal.db
+    cache:
+      type: none  # No cache for simplicity
+    features:
+      sql_lab: true
+      dashboard_emails: false  # No email in local
+
+  # 2. Local with PostgreSQL - More realistic setup
+  local-postgres:
+    type: standard
+    environment: local
+    enabled: true
+    superset:
+      version: "5.0.0"
+      port: 8088
+      dev_mode: true
+      resources:
+        cpu: "1"
+        memory: "2Gi"
+    database:
+      type: postgresql
+      host: "postgres"  # Docker service name
+      port: 5432
+      name: "superset"
+      user: "superset"
+      password: "superset123"  # Change in production!
+    cache:
+      type: redis
+      host: "redis"  # Docker service name
+      port: 6379
+    features:
+      sql_lab: true
+      dashboard_emails: false
+
+  # 3. Local with full stack - Including monitoring
+  local-full:
+    type: standard
+    environment: local
+    enabled: true
+    superset:
+      version: "5.0.0"
+      port: 8088
+      dev_mode: false  # Production-like
+      replicas: 2  # Test scaling locally
+      resources:
+        cpu: "2"
+        memory: "4Gi"
+    database:
+      type: postgresql
+      host: "postgres"
+      port: 5432
+      name: "superset_prod"
+      user: "superset"
+      password: "${DB_PASSWORD:-superset123}"
+      # Local backup simulation
+      backup:
+        enabled: true
+        time: "02:00"
+        retention_days: 7
+    cache:
+      type: redis
+      host: "redis"
+      port: 6379
+      password: "${REDIS_PASSWORD:-redis123}"
+    monitoring:
+      enabled: true
+      prometheus:
+        retention_days: 7
+        storage_size: 10
+      grafana:
+        admin_password: "${GRAFANA_PASSWORD:-admin}"
+    features:
+      sql_lab: true
+      dashboard_emails: true
+      alerts: true
+      reports: true
+
+  # 4. Local development with external database
+  local-external-db:
+    type: minimal
+    environment: local
+    enabled: true
+    superset:
+      version: "5.0.0"
+      port: 8088
+      dev_mode: true
+    database:
+      type: postgresql
+      # Connect to external PostgreSQL
+      host: "host.docker.internal"  # Access host machine
+      port: 5432
+      name: "superset"
+      user: "superset"
+      password: "${EXTERNAL_DB_PASSWORD}"
+    cache:
+      type: none
+
+  # 5. Local with multiple Superset instances
+  local-multi-instance:
+    type: standard
+    environment: local
+    enabled: true
+    superset:
+      version: "5.0.0"
+      port: 8088  # Main instance
+      replicas: 3  # Multiple instances
+      resources:
+        cpu: "1"
+        memory: "2Gi"
+      # Load balancer will distribute traffic
+      autoscaling:
+        enabled: false  # No autoscaling locally
+    database:
+      type: postgresql
+      host: "postgres"
+      port: 5432
+      name: "superset"
+      user: "superset"
+      password: "superset123"
+    cache:
+      type: redis
+      host: "redis"
+      port: 6379
+      # Important for multi-instance
+      password: "redis123"
+
+  # 6. Local testing environment - Mirrors production
+  local-test:
+    extends: production  # Inherit from production config
+    environment: local  # Override to local
+    enabled: true
+    superset:
+      port: 8088
+      replicas: 1  # Scale down for local
+      resources:
+        cpu: "2"
+        memory: "4Gi"
+    database:
+      type: postgresql
+      host: "postgres"
+      port: 5432
+      # Override cloud-sql settings
+      tier: null
+      disk_size: null
+      high_availability: false
+    cache:
+      type: redis
+      host: "redis"
+      port: 6379
+      # Override cloud redis settings
+      tier: null
+      memory_size_gb: null
+      high_availability: false
+    # Disable cloud-specific features
+    security:
+      ssl:
+        enabled: false  # No SSL locally
+      vpc:
+        enabled: false
+    cloudflare:
+      enabled: false
+    monitoring:
+      enabled: true
+      prometheus:
+        retention_days: 3  # Short retention
+        storage_size: 5
+
+  # 7. Local demo environment - For presentations
+  local-demo:
+    type: minimal
+    environment: local
+    enabled: true
+    superset:
+      version: "5.0.0"
+      port: 8080  # Different port
+      dev_mode: false
+      # Custom branding for demos
+      resources:
+        cpu: "1"
+        memory: "2Gi"
+    database:
+      type: sqlite
+      path: ./data/superset-demo.db
+      # Pre-populated with demo data
+    cache:
+      type: none
+    features:
+      sql_lab: true
+      dashboard_emails: false
+      alerts: false
+      reports: false
+
+  # 8. Local performance testing
+  local-perf-test:
+    type: standard
+    environment: local
+    enabled: true
+    superset:
+      version: "5.0.0"
+      port: 8088
+      dev_mode: false
+      replicas: 5  # High replica count
+      resources:
+        cpu: "4"  # High CPU
+        memory: "8Gi"  # High memory
+    database:
+      type: postgresql
+      host: "postgres"
+      port: 5432
+      name: "superset_perf"
+      user: "superset"
+      password: "superset123"
+      # Connection pool tuning
+      max_connections: 200
+    cache:
+      type: redis
+      host: "redis"
+      port: 6379
+      password: "redis123"
+      # Performance tuning
+      maxmemory_policy: "allkeys-lru"
+      timeout: 60
+    monitoring:
+      enabled: true  # Monitor performance
+      prometheus:
+        retention_days: 1  # Short retention
+        storage_size: 5
+
+# Usage Instructions:
+# 1. Choose the appropriate local stack for your use case
+# 2. Copy this file to system.yaml or create your own
+# 3. Run: make dev
+# 4. Access Superset at http://localhost:8088 (or configured port)
+#
+# Docker Compose Integration:
+# - These configurations work with docker/docker-compose.yaml
+# - Service names (postgres, redis) match Docker service names
+# - Use "host.docker.internal" to access host machine services
+#
+# Environment Variables:
+# Set these before running:
+# - DB_PASSWORD: PostgreSQL password
+# - REDIS_PASSWORD: Redis password
+# - EXTERNAL_DB_PASSWORD: For external database connection
+# - GRAFANA_PASSWORD: Grafana admin password
